@@ -1,16 +1,16 @@
-# BCR rep分析流程
+# BCR rep analysis pipeline
 
-#### 环境配置
+#### Environment
 
 ```shell
-source /home/yzchen_pkuhpc/profile/hjx/.bashrc
+source /home/yourname/.bashrc
 conda activate BCRrep
-cd /lustre2/yzchen_pkuhpc/profile/hjx/data/HJY_BCRrep_0704/N2413673_80-1550858036_2024-06-30/MS240629-0126/
+cd /your_seq_dir/
 ```
 
 
 
-#### 测序质量报告
+#### Sequencing Qulity Control Report
 
 ```shell
 mkdir fastqc_report
@@ -18,9 +18,8 @@ mkdir fastqc_report
 fastqc -o ./fastqc_report ./*.fq.gz
 ```
 
-#### 双端merge
+#### Paired-end Read Merge
 
-由于之前neha处理的时候是通过R语言对每一个文件生成了命令行，但是其实shell里面可以直接做循环的。
 
 ```shell
 mkdir pear_merge
@@ -29,7 +28,7 @@ for file in $(find ./ -type f -name "*_1.fq.gz"); do
 filename=$(basename "$file")
 filename_pre="${filename%_L1_1.fq.gz}"
 echo "-------------------------"
-echo "开始merge：${filename_pre}"
+echo "start merge：${filename_pre}"
 n_r1=$(zgrep -c '^@' "${filename_pre}_L1_1.fq.gz")
 echo "${filename_pre}_L1_1.fq.gz文件序列数为${n_r1}"
 n_r2=$(zgrep -c '^@' "${filename_pre}_L1_2.fq.gz")
@@ -41,10 +40,9 @@ done
 cd pear_merge
 for file in $(find ./ -type f -name "*.assembled.fastq"); do
 filename=$(basename "$file")
-# 这里的后缀在实际操作的过程中有问题
 n_seq=$(zgrep -c '^@' "${filename}")
 echo "-------------------------"
-echo "开始merge：${filename}的序列有::${n_seq}"
+echo "start merge：${filename} file has sequence number::${n_seq}"
 echo "-------------------------"
 done
 ```
@@ -54,12 +52,11 @@ for file in $(find ./ -type f -name "*_1.fq.gz"); do
 filename=$(basename "$file")
 filename_pre="${filename%_L1_1.fq.gz}"
 echo "-------------------------"
-echo "开始merge：${filename_pre}"
+echo "start merge：${filename_pre}"
 n_r1=$(zgrep -c '^@' "${filename_pre}_L1_1.fq.gz")
-echo "${filename_pre}_L1_1.fq.gz文件序列数为${n_r1}"
+echo "${filename_pre}_L1_1.fq.gz has sequence number: ${n_r1}"
 n_r2=$(zgrep -c '^@' "${filename_pre}_L1_2.fq.gz")
-echo "${filename_pre}_L1_2.fq.gz文件序列数为${n_r2}"
-# 由于发现了一些问题，现在取消q 为20 的参数，看看merge的效率。
+echo "${filename_pre}_L1_2.fq.gz has sequence number: ${n_r2}"
 pear -f ${filename_pre}_L1_1.fq.gz -r ${filename_pre}_L1_2.fq.gz -o pear_merge_new/${filename_pre}_m -v 20 -n 80
 echo "-------------------------"
 done
@@ -67,9 +64,9 @@ done
 
 
 
-#### 质量控制
+#### Quality Control
 
-使用`filter.R`脚本处理双端merge序列，对序列进行质量控制(QC)。质量控制的步骤有：
+use `filter.R` scripts to process merge sequence， and do quality control for the low quality base。 the step is as below：
 
 part 1: sequence correction: replace the intermittent low quality read (Q<20) to "N"
 
@@ -78,8 +75,6 @@ part 2: sequence correction: four continous "N" will be trimmed
 part 3: remove all the fasta file whose whole "N" > 2%
 
 part 4: convert the form to ".fasta"
-
-由于目前的程序之后结果会在pear_merge文件夹中，所以在R语言代码处理后，还需要将文件移动到QC文件夹中。
 
 ```shell
 R
@@ -178,15 +173,14 @@ echo "${filename}经过QC之后的序列有：${n_seqs}"
 done
 ```
 
-#### IgBLAST比对
+#### IgBLAST alignment
 
-使用的IgBlast是经过改进之后的工具，目前该工具只能查询人类的序列。在igblast工具的子目录下面，它对于单个文件查询的shell命令如下：
 ```shell
 chmod +X ./IgBlast_process.sh
 ./test.sh -i myseq/HJY_BCRrep_QC/A1_L1_m.fasta -o result/HJY_BCRrep_QC/A1_L1_m.raw.tsv -p result/HJY_BCRrep_QC/A1_L1_m.pro.tsv
 ```
 
-对于整个文件夹内的所有序列文件，需要通过循环结果查询：
+and for specific directory which has many fasta file, you can use the scripts below：
 
 ```shell
 dir=Elisa_IgD
@@ -200,26 +194,24 @@ echo "--------------------------"
 done
 ```
 
-* 比对之后的分析顺序是`has_vjcdr.R`, `addUMI.R`,  接着去对应的文件去获取对应的cdr3_id和barcode_id。
+* after alignment, you can use `has_vjcdr.R`, `addUMI.R`, to get the sepcific barcode and UMI for every read。
 
-#### 比对结果分析
+####  Get Complete VDJ
 
-该结果的分析从hpc转到了实验室的server上。
+the read aligned successfully for all the V, D, cdr3 region is considered as a good BCR read
 
-在HJY0628的测序结果中，通过同时有`v`, `j`, `cdr3`的
+#### Remove PCR repeat
 
-#### 去除PCR repeat
+In the previous step, we have extracted UNV, barcode and short UNV sequence after barcode from the sequenced sequence according to our own library structure. Then, in the real data, due to the influence of sequencing quality and PCR process, the following will appear:
 
-在上一步我们已经根据我们自己的文库结构从测序的序列中提取出了UNV，barcode和barcode之后的短的UNV序列，然后在真实的数据中，由于测序质量和PCR过程的影响，会出现：
+* The beginning is not UNV sequence
+* UNV at the beginning and after will be deleted or inserted
+* The barcode will be deleted or inserted, resulting in the length not meeting the designed library structure
+* Sequencing errors or N in the barcode and UNV structure
 
-* 开头不是UNV序列
-* 开头和之后的UNV会出现删除和插入
-* barcode出现删除和插入导致长度不符合设计的文库结构
-* barcode和UNV结构中出现测序错误或者N的情况
+For how to remove PCR amplification, the most critical issue is to assign the most appropriate barcode to each sequence.
 
-对于如何去除PCR扩增，最关键的问题就是给每条序列都分配一个最合适的barcode。
-
-#### 定义barcode_id和cdr3_id
+#### Define Barcode id & cdr3 id
 
 ```shell
 cd barcode_id
@@ -227,7 +219,7 @@ cd barcode_id
 for file in $(find ./ -type f -name "*.tsv"); do
 filename=$(basename "$file")
 echo "--------------------------"
-echo "开始查询::"${filename}
+echo "start requiry::"${filename}
 DefineClones.py -d ${filename} --outdir ./ --failed --act set --model ham --norm len --dist 0 --maxmiss 100
 echo "--------------------------"
 done
@@ -239,26 +231,33 @@ cd cdr3_id
 for file in $(find ./ -type f -name "*.tsv"); do
 filename=$(basename "$file")
 echo "--------------------------"
-echo "开始查询::"${filename}
+echo "start requiry::"${filename}
 DefineClones.py -d ${filename} --outdir ./ --failed --act set --model ham --norm len --dist 0.05 --maxmiss 100
 echo "--------------------------"
 done
 ```
 
-#### 定义克隆
+#### Define Clones
 
-对于去除PCR repeat之后的序列，我们需要对其进行克隆定义，克隆定义的标准如下：
+when remove the PCR repeat, we can now define the clones for BCR
 ```shell
 for file in $(find ./ -type f -name "*.tsv"); do
 filename=$(basename "$file")
 echo "--------------------------"
-echo "开始定义克隆::"${filename}
+echo "start define clones::"${filename}
 DefineClones.py -d ${filename} --outdir ./clone_expansion --failed --act set --model ham --norm len --dist 0.15 --maxmiss 100
 echo "--------------------------"
 done
 ```
 
-#### 绘制Treemap
+#### DownStream Analysis
+<hr>
+1. VH gene usagement
+2. AA length and hydrophobicity analysis
+3. Diversity of VH usagement
+4. JSD & KLD
+5. VH mutation frequency
+#### Draw Treemap
 
 ```R
 # Treemap
@@ -284,13 +283,4 @@ for (file_name in file_list) {
   dev.off()
 }
 ```
-
-#### DownStream Analysis
-
-1. VH gene usagement
-2. AA length and hydrophobicity analysis
-3. Diversity of VH usagement
-4. JSD & KLD
-5. VH mutation frequency
-
 
