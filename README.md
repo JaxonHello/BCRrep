@@ -284,3 +284,14 @@ for (file_name in file_list) {
 }
 ```
 
+#### DownStream Analysis
+
+---
+
+1. VH gene usagement
+2. AA length and hydrophobicity analysis
+3. Diversity of VH usagement
+4. JSD & KLD
+5. VH mutation frequency
+
+
